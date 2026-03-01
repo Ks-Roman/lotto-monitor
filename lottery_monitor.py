@@ -1,10 +1,8 @@
 import requests
 import json
-import time
 import sys
-from collections import defaultdict
-import random
 import os
+from collections import defaultdict
 
 # ===== 1. НАСТРОЙКИ =====
 HEADERS = {
@@ -75,84 +73,76 @@ def fetch_draws(page=0, count=10):
         print(f"⚠️ Ошибка запроса: {e}")
         return []
 
-# ===== 7. ПРИНУДИТЕЛЬНАЯ ПРОВЕРКА ПРИ ЗАПУСКЕ =====
-def initial_scan():
-    print("🔍 Принудительная проверка последних 50 тиражей...")
-    all_draws = []
-    for page in range(5):
-        draws = fetch_draws(page=page, count=10)
-        all_draws.extend(draws)
-        if len(draws) < 10:
-            break
-    found = []
-    for draw in all_draws:
+# ===== 7. ОСНОВНАЯ ФУНКЦИЯ (ОДНОКРАТНАЯ) =====
+def main():
+    print("🚀 Запуск однократной проверки тиражей")
+    print("=" * 60)
+
+    # Загружаем последние 10 тиражей
+    draws = fetch_draws(page=0, count=10)
+
+    if not draws:
+        print("❌ Не удалось получить данные")
+        return
+
+    # Проверяем, есть ли наши комбинации
+    found_letters = []
+    last_checked = None
+
+    # Определяем последний обработанный тираж (если есть)
+    if os.path.exists('last_checked.txt'):
+        with open('last_checked.txt', 'r') as f:
+            last_checked = int(f.read().strip())
+
+    for draw in draws:
+        draw_num = draw['number']
+        if last_checked and draw_num <= last_checked:
+            continue
+
         nums = tuple(sorted([int(x) for x in draw['winningCombination'][:5]]))
         if nums in COMBO_MAP:
             letter = COMBO_MAP[nums]
-            found.append((draw['number'], letter))
-    if found:
-        print(f"✅ Найдено {len(found)} вхождений:")
-        for num, letter in sorted(found):
-            print(f"   Тираж {num}: {letter}")
+            found_letters.append((draw_num, letter))
             sequence.append(letter)
-    else:
-        print("❌ Ни одной комбинации B, C, D, F не найдено")
-    return found
+            last_checked = draw_num
 
-# ===== 8. ОСНОВНОЙ ЦИКЛ =====
-def main():
-    print("🚀 Запущен мониторинг переходов B, C, D, F")
-    print("=" * 60)
-    initial_scan()
-    last_checked = None
-    # Запоминаем последний обработанный тираж при запуске
-    if sequence:
-        # В качестве начала возьмем последний в последовательности, но для проверки нужен номер тиража
-        # Здесь можно доработать сохранение последнего номера, но для простоты пропустим
-        pass
-    while True:
-        try:
-            draws = fetch_draws(page=0, count=10)
-            new_letters = []
-            for draw in draws:
-                if last_checked and draw['number'] <= last_checked:
-                    continue
-                nums = tuple(sorted([int(x) for x in draw['winningCombination'][:5]]))
-                if nums in COMBO_MAP:
-                    letter = COMBO_MAP[nums]
-                    new_letters.append((draw['number'], letter))
-            if new_letters:
-                print(f"\n📥 Получены новые тиражи: {[f'№{num}={letter}' for num, letter in new_letters]}")
-                for num, letter in new_letters:
-                    sequence.append(letter)
-                    last_checked = num
-                last = sequence[-1]
-                best, probs = predict_next(last)
-                print(f"📊 Текущая буква: {last}")
-                print(f"📈 Вероятности следующей:")
-                for nxt, prob in probs.items():
-                    print(f"   → {nxt} : {prob*100:.1f}%")
-                print(f"🎯 Самый вероятный следующий: {best}")
-                if len(sequence) >= 3:
-                    prev = sequence[-3]
-                    actual = sequence[-2]
-                    predicted, _ = predict_next(prev)
-                    if predicted == actual:
-                        print(f"✅ Предыдущий прогноз для {prev} → {actual} сбылся!")
-                    else:
-                        print(f"❌ Предыдущий прогноз для {prev} был {predicted}, а выпало {actual}")
-                with open(sequence_file, 'w') as f:
-                    f.write(','.join(sequence))
-            print(f"\n⏳ Следующая проверка через 30 минут... ({time.strftime('%H:%M:%S')})")
-            sys.stdout.flush()
-            time.sleep(1800)
-        except KeyboardInterrupt:
-            print("\n👋 Завершение работы")
-            break
-        except Exception as e:
-            print(f"⚠️ Ошибка в основном цикле: {e}")
-            time.sleep(300)
+    # Если нашли новые буквы
+    if found_letters:
+        print(f"\n✅ Найдены новые комбинации:")
+        for num, letter in found_letters:
+            print(f"   Тираж {num}: {letter}")
+
+        # Обновляем последовательность
+        with open(sequence_file, 'w') as f:
+            f.write(','.join(sequence))
+
+        # Сохраняем последний обработанный тираж
+        if last_checked:
+            with open('last_checked.txt', 'w') as f:
+                f.write(str(last_checked))
+
+        # Делаем прогноз на следующую
+        last = sequence[-1]
+        best, probs = predict_next(last)
+        print(f"\n📊 Текущая буква: {last}")
+        print(f"📈 Вероятности следующей:")
+        for nxt, prob in probs.items():
+            print(f"   → {nxt} : {prob*100:.1f}%")
+        print(f"🎯 Самый вероятный следующий: {best}")
+
+        # Проверяем предыдущий прогноз
+        if len(sequence) >= 3:
+            prev = sequence[-3]
+            actual = sequence[-2]
+            predicted, _ = predict_next(prev)
+            if predicted == actual:
+                print(f"✅ Предыдущий прогноз для {prev} → {actual} сбылся!")
+            else:
+                print(f"❌ Предыдущий прогноз для {prev} был {predicted}, а выпало {actual}")
+    else:
+        print("❌ Новых комбинаций B, C, D, F не найдено")
+
+    print("\n🏁 Проверка завершена. Скрипт закончил работу.")
 
 if __name__ == "__main__":
     main()
-

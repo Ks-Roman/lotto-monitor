@@ -1,4 +1,3 @@
-<details> <summary>Финальный код для копирования (нажмите, чтобы развернуть)</summary>
 import requests
 import json
 import time
@@ -156,4 +155,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-  </details>
+

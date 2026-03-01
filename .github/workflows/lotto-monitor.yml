@@ -2,9 +2,8 @@ name: Lottery Monitor
 
 on:
   schedule:
-    # Запускать каждые 30 минут
     - cron: '*/30 * * * *'
-  workflow_dispatch: # Возможность запуска вручную со вкладки Actions
+  workflow_dispatch:
 
 jobs:
   check-lottery:
@@ -12,10 +11,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -28,7 +27,7 @@ jobs:
         run: python lottery_monitor.py
 
       - name: Save results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4  # ← Вот это главное изменение: v4 вместо v3
         with:
           name: lottery-results
           path: sequence_backup.txt

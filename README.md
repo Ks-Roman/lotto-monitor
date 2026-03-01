@@ -1,2 +1,2 @@
 # lotto-monitor
-мониторинг
+monitoring

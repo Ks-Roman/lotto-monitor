@@ -1,8 +1,11 @@
 import requests
 import json
-import sys
 import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from collections import defaultdict
+from datetime import datetime
 
 # ===== 1. НАСТРОЙКИ =====
 HEADERS = {
@@ -13,7 +16,7 @@ HEADERS = {
 }
 URL = "https://www.stoloto.ru/p/api/mobile/api/v35/service/draws/archive"
 
-# ===== 2. НАШИ КОМБИНАЦИИ (только B, C, D, F) =====
+# ===== 2. НАШИ КОМБИНАЦИИ =====
 COMBO_MAP = {
     (21,30,33,34,35): "B",
     (4,6,11,19,30): "C",
@@ -29,7 +32,6 @@ TRANSITIONS = [
     ("F", "C"), ("F", "C"),
 ]
 
-# Строим граф с весами
 graph = defaultdict(lambda: defaultdict(int))
 for f, t in TRANSITIONS:
     graph[f][t] += 1
@@ -41,25 +43,63 @@ if os.path.exists(sequence_file):
         seq_str = f.read().strip()
         if seq_str:
             sequence = seq_str.split(',')
-            print(f"🔄 Загружена сохраненная последовательность длиной {len(sequence)}")
+            print(f"🔄 Загружена последовательность: {len(sequence)} букв")
         else:
             sequence = ["B", "C", "D", "F", "C", "B", "D", "F", "B", "C", "D", "F", "C", "D", "B", "F"]
-            print("📄 Используется начальная последовательность")
 else:
     sequence = ["B", "C", "D", "F", "C", "B", "D", "F", "B", "C", "D", "F", "C", "D", "B", "F"]
-    print("📄 Используется начальная последовательность")
 
 # ===== 5. ФУНКЦИЯ ПРОГНОЗА =====
 def predict_next(current):
     if current not in graph:
-        return None, []
+        return None, {}
     options = graph[current]
     total = sum(options.values())
     probs = {k: v/total for k, v in options.items()}
     best = max(options.items(), key=lambda x: x[1])[0]
     return best, probs
 
-# ===== 6. ФУНКЦИЯ ПОЛУЧЕНИЯ ТИРАЖЕЙ =====
+# ===== 6. ФУНКЦИЯ ОТПРАВКИ EMAIL (Яндекс) =====
+def send_notification(letter, draw_number, sequence):
+    sender_email = os.environ.get('YANDEX_USER')
+    sender_password = os.environ.get('YANDEX_PASSWORD')
+    receiver_email = sender_email
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+    msg['Subject'] = f"🎯 Выпала комбинация {letter} в тираже {draw_number}"
+
+    last = sequence[-1]
+    best, probs = predict_next(last)
+
+    body = f"""
+    <h2>🎯 Обнаружена комбинация {letter}</h2>
+    <p><b>Тираж:</b> {draw_number}</p>
+    <p><b>Время:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+    <p><b>Последовательность:</b> {', '.join(sequence[-10:])}</p>
+    <h3>📊 Прогноз:</h3>
+    <p>Сейчас: <b>{last}</b></p>
+    <p>Вероятности:</p><ul>
+    """
+    for nxt, prob in probs.items():
+        body += f"<li>{nxt} : {prob*100:.1f}%</li>"
+    body += f"</ul><p>🎯 Самый вероятный: <b>{best}</b></p>"
+
+    msg.attach(MIMEText(body, 'html'))
+
+    try:
+        server = smtplib.SMTP_SSL('smtp.yandex.ru', 465)
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        print("✅ Email отправлен")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка email: {e}")
+        return False
+
+# ===== 7. ПОЛУЧЕНИЕ ТИРАЖЕЙ =====
 def fetch_draws(page=0, count=10):
     params = {'game': '5x36plus', 'count': count, 'page': page}
     try:
@@ -73,76 +113,57 @@ def fetch_draws(page=0, count=10):
         print(f"⚠️ Ошибка запроса: {e}")
         return []
 
-# ===== 7. ОСНОВНАЯ ФУНКЦИЯ (ОДНОКРАТНАЯ) =====
+# ===== 8. ОСНОВНАЯ ФУНКЦИЯ =====
 def main():
-    print("🚀 Запуск однократной проверки тиражей")
-    print("=" * 60)
+    print("🚀 Проверка тиражей")
+    print("=" * 40)
 
-    # Загружаем последние 10 тиражей
     draws = fetch_draws(page=0, count=10)
-
     if not draws:
-        print("❌ Не удалось получить данные")
+        print("❌ Нет данных")
         return
 
-    # Проверяем, есть ли наши комбинации
-    found_letters = []
+    found = []
     last_checked = None
-
-    # Определяем последний обработанный тираж (если есть)
     if os.path.exists('last_checked.txt'):
         with open('last_checked.txt', 'r') as f:
             last_checked = int(f.read().strip())
 
     for draw in draws:
-        draw_num = draw['number']
-        if last_checked and draw_num <= last_checked:
+        num = draw['number']
+        if last_checked and num <= last_checked:
             continue
-
         nums = tuple(sorted([int(x) for x in draw['winningCombination'][:5]]))
         if nums in COMBO_MAP:
             letter = COMBO_MAP[nums]
-            found_letters.append((draw_num, letter))
+            found.append((num, letter))
             sequence.append(letter)
-            last_checked = draw_num
+            last_checked = num
 
-    # Если нашли новые буквы
-    if found_letters:
-        print(f"\n✅ Найдены новые комбинации:")
-        for num, letter in found_letters:
-            print(f"   Тираж {num}: {letter}")
-
-        # Обновляем последовательность
+    if found:
+        print(f"✅ Найдено: {found}")
         with open(sequence_file, 'w') as f:
             f.write(','.join(sequence))
+        with open('last_checked.txt', 'w') as f:
+            f.write(str(last_checked))
 
-        # Сохраняем последний обработанный тираж
-        if last_checked:
-            with open('last_checked.txt', 'w') as f:
-                f.write(str(last_checked))
+        for num, letter in found:
+            send_notification(letter, num, sequence)
 
-        # Делаем прогноз на следующую
         last = sequence[-1]
         best, probs = predict_next(last)
-        print(f"\n📊 Текущая буква: {last}")
-        print(f"📈 Вероятности следующей:")
-        for nxt, prob in probs.items():
-            print(f"   → {nxt} : {prob*100:.1f}%")
-        print(f"🎯 Самый вероятный следующий: {best}")
+        print(f"📊 Сейчас: {last}, вероятный следующий: {best}")
 
-        # Проверяем предыдущий прогноз
         if len(sequence) >= 3:
             prev = sequence[-3]
             actual = sequence[-2]
             predicted, _ = predict_next(prev)
-            if predicted == actual:
-                print(f"✅ Предыдущий прогноз для {prev} → {actual} сбылся!")
-            else:
-                print(f"❌ Предыдущий прогноз для {prev} был {predicted}, а выпало {actual}")
+            status = "✅" if predicted == actual else "❌"
+            print(f"{status} Предыдущий прогноз: {prev} → {actual} (ожидался {predicted})")
     else:
-        print("❌ Новых комбинаций B, C, D, F не найдено")
+        print("❌ Новых комбинаций нет")
 
-    print("\n🏁 Проверка завершена. Скрипт закончил работу.")
+    print("🏁 Завершено")
 
 if __name__ == "__main__":
     main()
